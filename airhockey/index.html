@@ -163,6 +163,15 @@ function fromHandoff(msg, latSec, A){
 const $ = id => document.getElementById(id);
 const cv = $('cv'), ctx = cv.getContext('2d');
 const PREFIX = 'jtc-airhockey-';
+// Serveurs ICE. Les TURN publics de PeerJS (eu-0/us-0.turn.peerjs.com) n'existent plus: sans relais TURN,
+// la connexion directe échoue souvent entre 2 réseaux différents (4G <-> Wi-Fi). Ajouter ici un TURN
+// avec identifiants, ex: {urls:['turn:HOTE:443?transport=tcp','turns:HOTE:443?transport=tcp'], username:'…', credential:'…'}
+const ICE_SERVERS = [
+  {urls:'stun:stun.l.google.com:19302'},
+  {urls:'stun:stun1.l.google.com:19302'},
+  {urls:'stun:stun.cloudflare.com:3478'},
+];
+const PEER_OPTS = {config:{iceServers:ICE_SERVERS, sdpSemantics:'unified-plan'}};
 const puck = {x:.5,y:1,vx:0,vy:0};
 const mallet = {x:.5,y:2,vx:0,vy:0};
 const target = {x:.5,y:2};
@@ -388,7 +397,7 @@ function hostGame(reuse){
   if(G.peer){ try{G.peer.destroy();}catch(_){} G.peer=null; }
   if(!reuse){ hostCode=genCode(); hostTries=0; }
   waiting=true; setStatus(reuse?'Reconnexion…':'');
-  const peer=new Peer(PREFIX+hostCode); G.peer=peer;
+  const peer=new Peer(PREFIX+hostCode, PEER_OPTS); G.peer=peer;
   peer.on('open', ()=>{
     if(G.peer!==peer) return;
     hostTries=0;
@@ -396,7 +405,13 @@ function hostGame(reuse){
     $('btnShare').hidden = !navigator.share;
     setStatus('● En ligne, en attente de l\'autre joueur…');
   });
-  peer.on('connection', c=>{ if(G.conn){ c.close(); return; } waiting=false; setupConn(c,true); });
+  peer.on('connection', c=>{
+    if(G.conn && G.conn.open){ c.close(); return; }
+    if(G.conn){ try{G.conn.close();}catch(_){} G.conn=null; }   // tentative précédente échouée: on repart à zéro
+    waiting=false; setupConn(c,true);
+    // Si la liaison directe n'aboutit pas, on revient en attente au lieu de rester bloqué.
+    setTimeout(()=>{ if(G.conn===c && !c.open && G.mode!=='play'){ try{c.close();}catch(_){} G.conn=null; waiting=true; setStatus('● En ligne. La connexion directe a échoué, l\'autre joueur peut réessayer.'); } }, 20000);
+  });
   peer.on('error', e=>{
     if(G.peer!==peer) return;
     if(e.type==='unavailable-id'){
@@ -426,7 +441,7 @@ function joinGame(code){
   if(code.length!==4){ setStatus('Entre le code à 4 caractères'); return; }
   if(typeof Peer==='undefined'){ setStatus('PeerJS non chargé'); return; }
   setStatus('Connexion au serveur…');
-  const peer=new Peer(); G.peer=peer;
+  const peer=new Peer(undefined, PEER_OPTS); G.peer=peer;
   peer.on('open', ()=>{
     if(G.peer!==peer) return;
     setStatus('Recherche de la partie '+code+'…');
