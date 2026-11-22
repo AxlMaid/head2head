@@ -53,7 +53,7 @@
   <div class="panel" id="p-wait" hidden>
     <p>Code de la partie</p>
     <div id="code">····</div>
-    <p>L'autre joueur ouvre la même page et tape ce code, ou ouvre ce lien :</p>
+    <p>Envoie le lien (ou le code) à l'autre joueur. La partie démarre toute seule dès qu'il est connecté.<br><b>Reviens sur cette page et laisse-la ouverte.</b></p>
     <button id="btnCopy">Copier le lien</button>
     <button id="btnShare" hidden>Partager…</button>
     <div id="status2"></div>
@@ -355,6 +355,7 @@ function onMsg(m){
 }
 function setStatus(t){ $('status').textContent=t; $('status2').textContent=t; }
 function cleanup(){
+  waiting=false;
   clearInterval(G.pingTimer); G.pingTimer=null;
   try{ G.conn && G.conn.close(); }catch(e){}
   try{ G.peer && G.peer.destroy(); }catch(e){}
@@ -379,36 +380,63 @@ function setupConn(c, isHost){
 }
 function genCode(){ const a='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s=''; for(let i=0;i<4;i++) s+=a[Math.floor(Math.random()*a.length)]; return s; }
 
-let hostCode='';
-function hostGame(){
+let hostCode='', waiting=false, hostTries=0;
+function hostGame(reuse){
   initAudio();
   if(typeof Peer==='undefined'){ setStatus('PeerJS non chargé'); return; }
-  hostCode=genCode(); setStatus('');
+  if(G.peer){ try{G.peer.destroy();}catch(_){} G.peer=null; }
+  if(!reuse){ hostCode=genCode(); hostTries=0; }
+  waiting=true; setStatus(reuse?'Reconnexion…':'');
   const peer=new Peer(PREFIX+hostCode); G.peer=peer;
   peer.on('open', ()=>{
+    if(G.peer!==peer) return;
+    hostTries=0;
     $('code').textContent=hostCode; showPanel('wait');
     $('btnShare').hidden = !navigator.share;
+    setStatus('● En ligne, en attente de l\'autre joueur…');
   });
-  peer.on('connection', c=>{ if(G.conn){ c.close(); return; } setupConn(c,true); });
+  peer.on('connection', c=>{ if(G.conn){ c.close(); return; } waiting=false; setupConn(c,true); });
   peer.on('error', e=>{
-    if(e.type==='unavailable-id'){ try{peer.destroy();}catch(_){} hostGame(); }
-    else toMenu('Erreur réseau ('+e.type+')');
+    if(G.peer!==peer) return;
+    if(e.type==='unavailable-id'){
+      // Au retour d'arrière-plan l'ancien code peut rester réservé un instant: on le reprend, sinon nouveau code.
+      try{peer.destroy();}catch(_){} G.peer=null;
+      if(reuse && ++hostTries<8) setTimeout(()=>{ if(waiting) hostGame(true); }, 1500);
+      else hostGame();
+    } else if(waiting && (e.type==='network'||e.type==='server-error'||e.type==='socket-error'||e.type==='socket-closed')){
+      setStatus('Connexion au serveur perdue, nouvelle tentative…');
+      setTimeout(()=>{ if(waiting) hostGame(true); }, 2000);
+    } else toMenu('Erreur réseau ('+e.type+')');
   });
-  peer.on('disconnected', ()=>{ try{ peer.reconnect(); }catch(_){} });
+  peer.on('disconnected', ()=>{ if(!waiting||G.peer!==peer) return; setStatus('Reconnexion au serveur…'); try{ peer.reconnect(); }catch(_){} });
 }
+// Le téléphone suspend la page quand on va coller le lien dans une autre app: on se réenregistre au retour.
+function revive(){
+  if(!waiting || G.mode!=='lobby') return;
+  const p=G.peer;
+  if(!p || p.destroyed || p.disconnected) hostGame(true);
+}
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) revive(); });
+window.addEventListener('pageshow', revive);
+window.addEventListener('online', revive);
 function joinGame(code){
   initAudio();
   code=(code||'').toUpperCase().trim();
   if(code.length!==4){ setStatus('Entre le code à 4 caractères'); return; }
   if(typeof Peer==='undefined'){ setStatus('PeerJS non chargé'); return; }
-  setStatus('Connexion…');
+  setStatus('Connexion au serveur…');
   const peer=new Peer(); G.peer=peer;
   peer.on('open', ()=>{
+    if(G.peer!==peer) return;
+    setStatus('Recherche de la partie '+code+'…');
     const c=peer.connect(PREFIX+code,{reliable:true});
     setupConn(c,false);
-    setTimeout(()=>{ if(G.mode!=='play' && G.peer===peer) toMenu('Connexion impossible (réseau ?). Réessaie.'); }, 15000);
+    setTimeout(()=>{ if(G.mode!=='play' && G.peer===peer){
+      let ice=''; try{ ice=' ['+c.peerConnection.iceConnectionState+']'; }catch(_){}
+      toMenu('Connexion impossible'+ice+'. Vérifie que l\'autre écran est resté ouvert sur le code '+code+', puis réessaie.');
+    } }, 20000);
   });
-  peer.on('error', e=>{ toMenu(e.type==='peer-unavailable' ? 'Code introuvable' : 'Erreur réseau ('+e.type+')'); });
+  peer.on('error', e=>{ if(G.peer!==peer) return; toMenu(e.type==='peer-unavailable' ? 'Code '+code+' introuvable: l\'autre joueur doit rester sur son écran avec le code, puis réessaie.' : 'Erreur réseau ('+e.type+')'); });
 }
 function startSolo(){
   initAudio(); G.mode='play'; G.solo=true; G.host=true; resize(); resetGame(true); tryFullscreen(); tryWakeLock();
