@@ -382,6 +382,7 @@ function genCode(){ const a='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s=''; for(le
 
 let hostCode='', waiting=false, hostTries=0;
 function hostGame(reuse){
+  reuse = reuse===true;
   initAudio();
   if(typeof Peer==='undefined'){ setStatus('PeerJS non chargé'); return; }
   if(G.peer){ try{G.peer.destroy();}catch(_){} G.peer=null; }
@@ -449,7 +450,7 @@ async function tryWakeLock(){ try{ await navigator.wakeLock.request('screen'); }
 document.addEventListener('visibilitychange', ()=>{ if(!document.hidden && G.mode==='play') tryWakeLock(); });
 
 // ---- Boutons
-$('btnHost').onclick = hostGame;
+$('btnHost').onclick = ()=>hostGame();
 $('btnJoin').onclick = ()=>joinGame($('inCode').value);
 $('inCode').addEventListener('keydown', e=>{ if(e.key==='Enter') joinGame($('inCode').value); });
 $('btnSolo').onclick = startSolo;
