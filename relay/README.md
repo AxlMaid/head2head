@@ -2,6 +2,8 @@
 
 Un Durable Object par partie (code à 4 caractères). Il relaie les messages entre joueurs, sans simuler le jeu.
 
+URL déployée : `wss://head2head-relay.head2head-relay.workers.dev` (tests : `node test/relay.test.mjs <url>`)
+
 ## Protocole
 - Créer : `wss://HOTE/ws/CODE?create=1&max=2` (max 2 à 4 joueurs). Le premier arrivé a le slot 0.
 - Rejoindre : `wss://HOTE/ws/CODE`
