@@ -4,7 +4,7 @@
 //   wss://<worker>/ws/<CODE>?create=1&max=2   crée la partie (le 1er arrivé = slot 0)
 //   wss://<worker>/ws/<CODE>                  rejoint une partie existante
 //
-// Fermetures refusées (close code): 4404 partie introuvable, 4409 code déjà pris, 4403 partie pleine.
+// Refus: message {t:"error",code,reason} puis fermeture. Codes: 4404 partie introuvable, 4409 code déjà pris, 4403 partie pleine.
 // Messages serveur -> client (JSON texte): {t:"welcome",slot,players,max} | {t:"join",slot,players} | {t:"leave",slot,players}
 // Tout autre message (texte ou binaire) est relayé tel quel aux autres joueurs.
 // Keepalive: le client envoie le texte "ping", le serveur répond "pong" sans réveiller la partie.
@@ -31,7 +31,8 @@ export class Room extends DurableObject {
   }
 
   live(except) {
-    return this.ctx.getWebSockets().filter((w) => w !== except && w.readyState === WebSocket.OPEN);
+    // seuls les joueurs réellement entrés dans la partie (attachment posé) comptent
+    return this.ctx.getWebSockets().filter((w) => w !== except && w.readyState === WebSocket.OPEN && w.deserializeAttachment()?.slot !== undefined);
   }
 
   async fetch(request) {
@@ -58,7 +59,9 @@ export class Room extends DurableObject {
     }
 
     if (reject) {
-      server.close(reject[0], reject[1]);
+      // Un close envoyé avant la réponse 101 n'arrive pas au client: on envoie d'abord la raison en JSON, puis on ferme.
+      server.send(JSON.stringify({ t: "error", code: reject[0], reason: reject[1] }));
+      this.ctx.waitUntil(new Promise((r) => setTimeout(() => { try { server.close(reject[0], reject[1]); } catch (_) {} r(); }, 100)));
       return new Response(null, { status: 101, webSocket: client });
     }
 
@@ -82,6 +85,7 @@ export class Room extends DurableObject {
   async gone(ws) {
     const slot = ws.deserializeAttachment()?.slot;
     try { ws.close(1000, "bye"); } catch (_) {}
+    if (slot === undefined) return; // connexion refusée: jamais entrée dans la partie
     const rest = this.live(ws);
     if (rest.length === 0) {
       await this.ctx.storage.deleteAll();
